@@ -21,15 +21,6 @@ libraries = [
     "past",
 ]
 
-# target_dir = "driver/src"
-# # get all .o files in the target directory
-# for file in os.listdir(target_dir):
-#     if "pocc-pocc.o" in file:
-#         continue
-#     if file.endswith(".o"):
-#         extra_objects.append(os.path.join(target_dir, file))
-
-
 
 class CustomBuildExt(build_ext):
     def run(self):
@@ -43,14 +34,6 @@ class CustomBuildExt(build_ext):
         # Copy the shared library to the package directory
         build_lib_dir = self.get_ext_fullpath("past")
         build_lib_dir = os.path.dirname(build_lib_dir)
-        
-        # for lib_pth, lib_name in zip(library_dirs, libraries):
-        #     lib_path_symbolic = os.path.join(lib_pth, "lib" + lib_name + ".so")
-        #     if "libisl" in lib_path_symbolic:
-        #         lib_path_symbolic = os.path.join(lib_pth, "lib" + lib_name + ".so.19")
-        #     # trace the symbolic link to the real file
-        #     lib_path = os.path.realpath(lib_path_symbolic)
-        #     shutil.copy(lib_path, build_lib_dir)
 
         for lib_pth in library_dirs:
             # copy all .so, .so.** files
@@ -67,7 +50,6 @@ ext_modules = [
         library_dirs=library_dirs,
         libraries=libraries,
         extra_compile_args=['-fPIC'],
-        # extra_objects=extra_objects,
         extra_link_args=['-Wl,-rpath,$ORIGIN'],  # Add RPATH to search the directory of the .so
         language='c++',             # Using C++
     ),
@@ -75,6 +57,8 @@ ext_modules = [
 
 setup(
     name='past',
+    version='0.7.0',
+    author='Louis-Noel Pouchet, Niansong Zhang',
     ext_modules=ext_modules,
     cmdclass={'build_ext': CustomBuildExt},
     include_package_data=True,
