@@ -46,7 +46,7 @@ jobs:
             cp Makefile.am ./past-0.7.0/src/
           fi
           cd past-0.7.0
-          python setup.py sdist bdist_wheel
+          python setup.py bdist_wheel
           mv dist ../
 
       # Step 6: Upload the wheel as an artifact
@@ -75,6 +75,6 @@ jobs:
           artifacts: 'dist/*'
           token: ${{ secrets.GITHUB_TOKEN }}  # Automatically available GitHub token
           tag: ${{ github.ref_name }}  # The tag from the push event
-          name: Release ${{ github.ref_name }}  # Optional: Customize release name
+          name: Release ${{ github.event.head_commit.message }}  # Optional: Customize release name
           draft: false
           prerelease: false
