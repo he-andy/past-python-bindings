@@ -68,13 +68,17 @@ jobs:
         with:
           name: dist
 
-      # Step 8: Publish release
+      # Step 8: Get short commit SHA (first 7 characters)
+      - name: Get short commit SHA
+        run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
+
+      # Step 9: Publish release
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
           artifacts: 'dist/*'
           token: ${{ secrets.GITHUB_TOKEN }}  # Automatically available GitHub token
-          tag: ${{ github.sha.slice(0, 7) }}  # Use the first 7 characters of the commit hash as the tag
-          name: Release ${{ github.event.head_commit.message }}  # Optional: Customize release name
+          tag: ${{ env.COMMIT_HASH }}  # Use the shortened commit hash
+          name: Release ${{ github.event.head_commit.message }}  # Optional: Use commit message as the release name
           draft: false
           prerelease: false
