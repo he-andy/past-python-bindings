@@ -47,7 +47,7 @@ jobs:
           fi
           cd past-0.7.0
           python setup.py sdist bdist_wheel
-          mv past-0.7.0/dist ../
+          mv dist ../
 
       # Step 6: Upload the wheel as an artifact
       - name: Upload the wheel
