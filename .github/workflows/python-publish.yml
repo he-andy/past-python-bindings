@@ -67,6 +67,7 @@ jobs:
         uses: actions/download-artifact@v3
         with:
           name: dist
+          path: dist/  # This will ensure the artifact is downloaded to the dist/ folder
 
       # Step 8: Get short commit SHA (first 7 characters)
       - name: Get short commit SHA
