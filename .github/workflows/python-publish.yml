@@ -1,0 +1,71 @@
+name: Build and Publish Python Wheel
+
+# Trigger on every push to any branch
+on:
+  push:
+    branches:
+      - '**'  # Triggers on every branch push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 1: Checkout the code
+      - name: Checkout the code
+        uses: actions/checkout@v3
+
+      # Step 2: Set up Python 3.12
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12'
+
+      # Step 3: Install GCC 8
+      - name: Install GCC 8
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-8 gcc-8
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 50
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 50
+
+      # Step 4: Install pybind11 and build dependencies
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel pybind11
+
+      # Step 5: Build the wheel
+      - name: Build the wheel
+        run: |
+          python setup.py sdist bdist_wheel
+
+      # Step 6: Upload the wheel as an artifact
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v3
+        with:
+          name: dist
+          path: dist/
+
+  release:
+    # if: github.ref_type == 'tag'  # Only trigger release if the commit is tagged
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      # Step 7: Download artifact
+      - name: Download artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: dist
+
+      # Step 8: Publish release
+      - name: Publish release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: 'dist/*'
+          token: ${{ secrets.GITHUB_TOKEN }}  # Automatically available GitHub token
+          tag: ${{ github.ref_name }}  # The tag from the push event
+          name: Release ${{ github.ref_name }}  # Optional: Customize release name
+          draft: false
+          prerelease: false
