@@ -74,7 +74,7 @@ jobs:
         with:
           artifacts: 'dist/*'
           token: ${{ secrets.GITHUB_TOKEN }}  # Automatically available GitHub token
-          tag: ${{ github.ref_name }}  # The tag from the push event
+          tag: ${{ github.sha }}  # The tag from the push event
           name: Release ${{ github.event.head_commit.message }}  # Optional: Customize release name
           draft: false
           prerelease: false
