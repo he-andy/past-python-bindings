@@ -21,13 +21,13 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Step 3: Install GCC 8
-      - name: Install GCC 8
+      # Step 3: Install GCC 9
+      - name: Install GCC 9
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-8 gcc-8
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-8 50
-          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-8 50
+          sudo apt-get install -y g++-9 gcc-9
+          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
+          sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
 
       # Step 4: Install pybind11 and build dependencies
       - name: Install build dependencies
