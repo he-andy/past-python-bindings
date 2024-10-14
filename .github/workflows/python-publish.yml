@@ -57,7 +57,7 @@ jobs:
           path: dist/
 
   release:
-    # if: github.ref_type == 'tag'  # Only trigger release if the commit is tagged
+    if: github.ref_type == 'tag'  # Only trigger release if the commit is tagged
     needs: build
     runs-on: ubuntu-latest
 
