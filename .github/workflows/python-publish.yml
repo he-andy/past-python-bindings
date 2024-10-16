@@ -41,9 +41,9 @@ jobs:
           if [ ! -d "past-0.7.2" ]; then
               wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
               tar -xvf past-0.7.2.tar.gz
-              cp ../setup.py ./past-0.7.2/
-              cp ../bindings.cpp ./past-0.7.2/src/
-              cp ../Makefile.am ./past-0.7.2/src/
+              cp setup.py ./past-0.7.2/
+              cp bindings.cpp ./past-0.7.2/src/
+              cp Makefile.am ./past-0.7.2/src/
               sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
           cd past-0.7.2
