@@ -24,6 +24,7 @@ INCLUDES		= -I$(top_builddir) -I$(top_builddir)/past	\
 			-I$(top_srcdir) -I$(top_srcdir)/past		\
 			-I$(install_prefix) -$(install_prefix)/past	\
 			-I$(top_srcdir)/past/include \
+			-I$(top_srcdir)/past/include/past \
 			-I$(shell python3 -m pybind11 --includes)
 
 # Python module build rules

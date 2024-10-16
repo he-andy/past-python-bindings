@@ -10,6 +10,7 @@ include_dirs = [
     sysconfig.get_path('include'),
     pybind11.get_include(),
     "past/include",
+    "past/include/past",
 ]
 
 library_dirs = [
@@ -28,7 +29,7 @@ class CustomBuildExt(build_ext):
         subprocess.check_call(["./configure"])
         subprocess.check_call(["make", "-j4"])
         
-        # Proceed with the usual build_ext command
+        # Proceed with the usual builid_ext command
         super().run()
 
         # Copy the shared library to the package directory
@@ -57,7 +58,7 @@ ext_modules = [
 
 setup(
     name='past',
-    version='0.7.0',
+    version='0.7.2',
     author='Louis-Noel Pouchet, Niansong Zhang',
     ext_modules=ext_modules,
     cmdclass={'build_ext': CustomBuildExt},
