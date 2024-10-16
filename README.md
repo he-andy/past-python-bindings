@@ -30,7 +30,7 @@ def test_gemm():
     prog_a = "gemm/vanilla.c"
     prog_b = "gemm/acc-inter.c"
     out_var = "C"
-    past.verify(prog_a, prog_b, out_var, debug=False, verbose=True)
+    equiv = past.verify(prog_a, prog_b, out_var, debug=False, verbose=True)
 ```
 
 ## Publications
