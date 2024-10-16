@@ -238,14 +238,14 @@ int verify(
 
   int uok = 0;
 
-  if (p2)
+  // if (p2)
     uok = past_abstract_interpretation_are_equivalent (p1, p2,
 						       live_out_vars,
 						       values,
 						       ai_options);
-  else
-    uok = past_abstract_interpretation_to_c (p1, live_out_vars, values,
-					     ai_options);
+  // else
+  //   uok = past_abstract_interpretation_to_c (p1, live_out_vars, values,
+	// 				     ai_options);
   if (uok == -1)
     {
       fprintf (stderr, "[PAST][ERROR] Abstract interpretation failed.\n");
