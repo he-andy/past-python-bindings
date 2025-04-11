@@ -104,9 +104,40 @@ jobs:
           
       - name: Patch timer.c for ARM architecture
         run: |
+          cat > timer_patch.c << 'EOF'
+          /* Add architecture-specific timer implementation */
+          #ifdef __x86_64__
+          /* x86-64 implementation */
+          static __inline__ unsigned long long rdtsc(void)
+          {
+            unsigned long long int x;
+            __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
+            return x;
+          }
+          #elif defined(__i386__)
+          /* i386 implementation */
+          static __inline__ unsigned long long rdtsc(void)
+          {
+            unsigned long long int x;
+            __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
+            return x;
+          }
+          #else
+          /* Generic implementation for other architectures */
+          #include <time.h>
+          static __inline__ unsigned long long rdtsc(void)
+          {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            return (unsigned long long)(ts.tv_sec * 1000000000ULL + ts.tv_nsec);
+          }
+          #endif
+          EOF
+          
           # Create a patched version of the timer.c file for macOS
-          # Create patch for timer.c
-          cat > timer_patch.diff << 'EOF'
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            # Create patch for timer.c
+            cat > timer_patch.diff << 'EOF'
           --- a/past-0.7.2/past/core/timer.c
           +++ b/past-0.7.2/past/core/timer.c
           @@ -62,9 +62,22 @@
@@ -146,12 +177,13 @@ jobs:
            }
           EOF
             
-          # Apply the patch to the actual timer.c file
-          cd past-0.7.2/past
-          if [ -f "core/timer.c" ]; then
-            patch -p2 < ../../timer_patch.diff || true
+            # Apply the patch to the actual timer.c file
+            cd past-0.7.2/past
+            if [ -f "core/timer.c" ]; then
+              patch -p2 < ../../timer_patch.diff || true
+            fi
+            cd ../..
           fi
-          cd ../..
           
       - name: Build on macOS
         run: |
