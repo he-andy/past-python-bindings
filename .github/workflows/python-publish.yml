@@ -194,8 +194,6 @@ jobs:
           cat "$TIMER_C_FILE"
           # ---- END AUTOMATIC PATCHING FOR timer.c ----
 
---
-
 
       # Step 6: Upload the macOS wheel artifact
       - name: Upload the macOS ARM wheel
