@@ -1,5 +1,4 @@
 name: Build and Publish Python Wheel
-
 # Trigger on every push to any branch
 on:
   push:
@@ -12,19 +11,20 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
+        python-version: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
-
     steps:
       # Step 1: Checkout the code
       - name: Checkout the code
-        uses: actions/checkout@v3
-
-      # Step 2: Set up Python 3.12
-      - name: Set up Python 3.12
-        uses: actions/setup-python@v4
+        uses: actions/checkout@v4
+        
+      # Step 2: Set up Python
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
-
+          python-version: ${{ matrix.python-version }}
+          cache: 'pip'
+          
       # Step 3: Install GCC 9 on Linux only
       - name: Install GCC 9
         if: matrix.os == 'ubuntu-latest'
@@ -33,13 +33,13 @@ jobs:
           sudo apt-get install -y g++-9 gcc-9
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
-
+          
       # Step 4: Install pybind11 and build dependencies
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
-
+          
       # Step 5: Download and prepare the past-0.7.2 package
       - name: Download and prepare past-0.7.2
         run: |
@@ -61,7 +61,7 @@ jobs:
                 sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               fi
           fi
-
+          
       # Step 6: Build the wheel with architecture flags for macOS
       - name: Build the wheel
         run: |
@@ -72,39 +72,33 @@ jobs:
           cd past-0.7.2
           python setup.py bdist_wheel
           mv dist ../
-
-      # Step 7: Upload the wheel as an artifact with an OS-specific name
+          
+      # Step 7: Upload the wheel as an artifact with an OS and Python-specific name
       - name: Upload the wheel
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
-          name: dist-${{ matrix.os }}
+          name: past-wheel-${{ matrix.os }}-py${{ matrix.python-version }}
           path: dist/
-
+          retention-days: 7
+          
   release:
-    # Trigger release after both builds finish.
+    # Trigger release after all builds finish
     needs: build
     runs-on: ubuntu-latest
-
+    permissions:
+      contents: write
     steps:
-      # Step 8: Download Linux artifact
-      - name: Download Linux wheel artifact
-        uses: actions/download-artifact@v3
+      # Step 8: Download all wheel artifacts
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
         with:
-          name: dist-ubuntu-latest
-          path: dist/linux
-
-      # Step 9: Download macOS artifact
-      - name: Download macOS wheel artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: dist-macos-latest
-          path: dist/macos
-
-      # Step 10: Get short commit SHA (first 7 characters) for tagging the release
+          path: dist/
+          
+      # Step 9: Get short commit SHA for tagging the release
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
-
-      # Step 11: Publish the release with both artifacts
+        
+      # Step 10: Publish the release with all artifacts
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
