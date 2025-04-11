@@ -1,9 +1,8 @@
 name: Build and Publish Python Wheel
-# Trigger on every push to any branch
 on:
   push:
     branches:
-      - '**'  # Triggers on every branch push
+      - '**'
   workflow_dispatch:
 
 jobs:
@@ -13,41 +12,44 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      # Step 1: Checkout the code
       - name: Checkout the code
         uses: actions/checkout@v4
         
-      # Step 2: Set up Python 3.12
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
           
-      # Step 3: Install OS-specific dependencies
       - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-9 gcc-9 automake autoconf libtool
+          sudo apt-get install -y g++-9 gcc-9 automake autoconf libtool pkg-config make
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
           
       - name: Install macOS dependencies
         if: matrix.os == 'macos-latest'
         run: |
-          brew install automake autoconf libtool
+          brew install automake autoconf libtool pkg-config
+          # Install specific version of Bison
+          brew install bison
+          echo 'export PATH="/usr/local/opt/bison/bin:$PATH"' >> ~/.bash_profile
+          export PATH="/usr/local/opt/bison/bin:$PATH"
+          # Show tool versions for debugging
+          autoconf --version
+          automake --version
+          libtool --version
+          make --version
           
-      # Step 4: Install pybind11 and build dependencies
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install setuptools wheel pybind11
+          pip install setuptools wheel pybind11 pytest
           
-      # Step 5: Download and prepare the past-0.7.2 package
       - name: Download and prepare past-0.7.2
         run: |
           if [ ! -d "past-0.7.2" ]; then
-              # Use wget on Linux and curl on macOS
               if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
                   wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
               else
@@ -57,53 +59,68 @@ jobs:
               cp setup.py ./past-0.7.2/
               cp bindings.cpp ./past-0.7.2/src/
               cp Makefile.am ./past-0.7.2/src/
-              # Use macOS-compatible sed on macOS
               if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
                 sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               else
                 sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               fi
-              # Make bootstrap.sh executable
               chmod +x ./past-0.7.2/bootstrap.sh
           fi
           
-      # Step 6: Build the wheel with architecture flags for macOS
+      - name: Debug macOS environment
+        if: matrix.os == 'macos-latest'
+        run: |
+          echo "SDKROOT: $SDKROOT"
+          echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
+          echo "Current directory:"
+          pwd
+          echo "Contents of directory:"
+          ls -la
+          echo "Past directory contents:"
+          ls -la past-0.7.2
+          
+      - name: Configure and build on macOS
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd past-0.7.2
+          export ARCHFLAGS="-arch x86_64"  # Build for Intel to avoid ARM issues
+          export MACOSX_DEPLOYMENT_TARGET=11.0
+          ./bootstrap.sh
+          ./configure --disable-silent-rules V=1
+          make V=1  # Verbose make to see what's failing
+          cd ..
+          
       - name: Build the wheel
         run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            echo "Building for macOS arm64..."
-            export ARCHFLAGS="-arch arm64"
-          fi
           cd past-0.7.2
-          python setup.py bdist_wheel
-          mv dist ../
+          if [ "${{ matrix.os }}" == "macos-latest" ]; then
+            export ARCHFLAGS="-arch x86_64"  # Match the architecture used in build
+            export MACOSX_DEPLOYMENT_TARGET=11.0
+          fi
+          python setup.py bdist_wheel --verbose
+          cp dist/* ../
           
-      # Step 7: Upload the wheel as an artifact with an OS-specific name
       - name: Upload the wheel
         uses: actions/upload-artifact@v4
         with:
           name: past-wheel-${{ matrix.os }}
-          path: dist/
+          path: "*.whl"
           retention-days: 7
           
   release:
-    # Trigger release after all builds finish
     needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
-      # Step 8: Download all wheel artifacts
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist/
           
-      # Step 9: Get short commit SHA for tagging the release
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
         
-      # Step 10: Publish the release with all artifacts
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
