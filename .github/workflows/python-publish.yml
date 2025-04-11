@@ -6,11 +6,8 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+  build-linux:
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout the code
         uses: actions/checkout@v4
@@ -21,15 +18,67 @@ jobs:
           python-version: '3.12'
           
       - name: Install Linux dependencies
-        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y g++-9 gcc-9 automake autoconf libtool pkg-config make
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
           
+      - name: Install build dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install setuptools wheel pybind11
+          
+      - name: Download and prepare past-0.7.2
+        run: |
+          if [ ! -d "past-0.7.2" ]; then
+              wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
+              tar -xvf past-0.7.2.tar.gz
+              cp setup.py ./past-0.7.2/
+              cp bindings.cpp ./past-0.7.2/src/
+              cp Makefile.am ./past-0.7.2/src/
+              sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
+              chmod +x ./past-0.7.2/bootstrap.sh
+          fi
+          
+      - name: Build on Linux
+        run: |
+          cd past-0.7.2
+          ./bootstrap.sh
+          ./configure
+          make
+          
+      - name: Build the wheel
+        run: |
+          cd past-0.7.2
+          python setup.py bdist_wheel
+          
+          # Copy wheels to root directory
+          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
+            cp dist/*.whl ../
+          fi
+          
+      - name: Upload the wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: past-wheel-linux
+          path: |
+            *.whl
+            past-0.7.2/config.log
+          retention-days: 7
+  
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout the code
+        uses: actions/checkout@v4
+        
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          
       - name: Install macOS dependencies
-        if: matrix.os == 'macos-latest'
         run: |
           brew install automake autoconf libtool pkg-config
           echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
@@ -44,59 +93,20 @@ jobs:
       - name: Download and prepare past-0.7.2
         run: |
           if [ ! -d "past-0.7.2" ]; then
-              if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-                  wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              else
-                  curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              fi
+              curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
               tar -xvf past-0.7.2.tar.gz
               cp setup.py ./past-0.7.2/
               cp bindings.cpp ./past-0.7.2/src/
               cp Makefile.am ./past-0.7.2/src/
-              if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-                sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              else
-                sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              fi
+              sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               chmod +x ./past-0.7.2/bootstrap.sh
           fi
           
       - name: Patch timer.c for ARM architecture
         run: |
-          cat > timer_patch.c << 'EOF'
-          /* Add architecture-specific timer implementation */
-          #ifdef __x86_64__
-          /* x86-64 implementation */
-          static __inline__ unsigned long long rdtsc(void)
-          {
-            unsigned long long int x;
-            __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
-            return x;
-          }
-          #elif defined(__i386__)
-          /* i386 implementation */
-          static __inline__ unsigned long long rdtsc(void)
-          {
-            unsigned long long int x;
-            __asm__ volatile (".byte 0x0f, 0x31" : "=A" (x));
-            return x;
-          }
-          #else
-          /* Generic implementation for other architectures */
-          #include <time.h>
-          static __inline__ unsigned long long rdtsc(void)
-          {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return (unsigned long long)(ts.tv_sec * 1000000000ULL + ts.tv_nsec);
-          }
-          #endif
-          EOF
-          
           # Create a patched version of the timer.c file for macOS
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            # Create patch for timer.c
-            cat > timer_patch.diff << 'EOF'
+          # Create patch for timer.c
+          cat > timer_patch.diff << 'EOF'
           --- a/past-0.7.2/past/core/timer.c
           +++ b/past-0.7.2/past/core/timer.c
           @@ -62,9 +62,22 @@
@@ -136,16 +146,14 @@ jobs:
            }
           EOF
             
-            # Apply the patch to the actual timer.c file
-            cd past-0.7.2/past
-            if [ -f "core/timer.c" ]; then
-              patch -p2 < ../../timer_patch.diff || true
-            fi
-            cd ../..
+          # Apply the patch to the actual timer.c file
+          cd past-0.7.2/past
+          if [ -f "core/timer.c" ]; then
+            patch -p2 < ../../timer_patch.diff || true
           fi
+          cd ../..
           
       - name: Build on macOS
-        if: matrix.os == 'macos-latest'
         run: |
           cd past-0.7.2
           
@@ -168,42 +176,50 @@ jobs:
           make || true
           cd ..
           
-      - name: Build on Linux
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          cd past-0.7.2
-          ./bootstrap.sh
-          ./configure
-          make
-          
-      - name: Build the wheel
+      - name: Build the proper wheel for macOS
         run: |
           cd past-0.7.2
           
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            # Build a stub wheel for macOS
-            echo "Building stub wheel for macOS"
-            mkdir -p past
-            touch past/__init__.py
-            
-            cat > setup.py << 'EOF'
-          from setuptools import setup, find_packages
-
+          # Create a proper setup.py for macOS
+          cat > setup.py << 'EOF'
+          from setuptools import setup, find_packages, Extension
+          import os
+          import platform
+          
+          # Define the extension module
+          extension_kwargs = {
+              'include_dirs': ['past/include'],
+              'library_dirs': ['past/.libs'],
+              'libraries': ['past'],
+          }
+          
+          # Handle macOS specific settings
+          if platform.system() == 'Darwin':
+              extension_kwargs['extra_compile_args'] = ['-DHAVE_CLOCK_GETTIME']
+              extension_kwargs['extra_link_args'] = []
+          
+          # Create the extension
+          ext_modules = [
+              Extension(
+                  'past._binding',
+                  ['src/bindings.cpp'],
+                  **extension_kwargs
+              )
+          ]
+          
           setup(
-              name="past-stub",
+              name="past",
               version="0.7.2",
               packages=find_packages(),
-              description="Stub package for past library on macOS",
+              ext_modules=ext_modules,
+              description="Python bindings for the PAST library",
               author="Your Name",
               author_email="your.email@example.com",
           )
           EOF
-            
-            python setup.py bdist_wheel
-          else
-            # Normal build for Linux
-            python setup.py bdist_wheel
-          fi
+          
+          # Build the wheel
+          python setup.py bdist_wheel
           
           # Copy wheels to root directory
           if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
@@ -213,14 +229,14 @@ jobs:
       - name: Upload the wheel
         uses: actions/upload-artifact@v4
         with:
-          name: past-wheel-${{ matrix.os }}
+          name: past-wheel-macos
           path: |
             *.whl
             past-0.7.2/config.log
           retention-days: 7
-          
-  release:
-    needs: build
+  
+  release-linux:
+    needs: build-linux
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -228,6 +244,7 @@ jobs:
       - name: Download wheel artifacts
         uses: actions/download-artifact@v4
         with:
+          name: past-wheel-linux
           path: dist/
           
       - name: List downloaded artifacts
@@ -237,12 +254,43 @@ jobs:
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
         
-      - name: Publish release
+      - name: Publish Linux release
         uses: ncipollo/release-action@v1
         with:
           artifacts: 'dist/**/*.whl'
           token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.COMMIT_HASH }}
-          name: Release ${{ github.event.head_commit.message }}
+          tag: ${{ env.COMMIT_HASH }}-linux
+          name: Linux Release ${{ github.event.head_commit.message }}
           draft: false
           prerelease: false
+          allowUpdates: true
+  
+  release-macos:
+    needs: build-macos
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: past-wheel-macos
+          path: dist/
+          
+      - name: List downloaded artifacts
+        run: |
+          find dist -type f -name "*.whl" | sort
+          
+      - name: Get short commit SHA
+        run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
+        
+      - name: Publish macOS release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: 'dist/**/*.whl'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ env.COMMIT_HASH }}-macos
+          name: macOS Release ${{ github.event.head_commit.message }}
+          draft: false
+          prerelease: false
+          allowUpdates: true
