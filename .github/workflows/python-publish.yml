@@ -91,22 +91,89 @@ jobs:
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
 
-      # Step 5: Build the macOS wheel
-      - name: Build the macOS wheel
+     # Step 5: Prepare PAST Source (Download, Extract, Copy, Patch) - MODIFIED for automatic patch
+      - name: Prepare PAST Source and Auto-Patch for ARM
         run: |
-          set -e
-          if [ ! -d "past-0.7.2" ]; then
+          set -e # Exit on first error
+          set -x # Print commands being executed
+
+          PAST_SRC_DIR="past-0.7.2"
+          TIMER_C_FILE="$PAST_SRC_DIR/core/timer.c"
+          INCLUDE_FILE="$PAST_SRC_DIR/past/include/past/abstract_interpretation_memory.h"
+
+          echo "Downloading and extracting PAST..."
+          if [ ! -d "$PAST_SRC_DIR" ]; then
             curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
             tar -xvf past-0.7.2.tar.gz
-            cp setup.py ./past-0.7.2/
-            cp bindings.cpp ./past-0.7.2/src/
-            cp Makefile.am ./past-0.7.2/src/
-            sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
+          else
+            echo "PAST directory already exists."
           fi
-          cd past-0.7.2
-          # The setup.py likely triggers ./bootstrap.sh or similar, which needs autotools
-          python setup.py bdist_wheel
-          mv dist ../dist_macos # Use a distinct name temporarily
+
+          echo "Copying custom files..."
+          cp setup.py "$PAST_SRC_DIR/"
+          cp bindings.cpp "$PAST_SRC_DIR/src/"
+          cp Makefile.am "$PAST_SRC_DIR/src/"
+
+          echo "Patching 'restrict' keyword..."
+          # macOS sed requires an argument for -i (backup extension), use '' for no backup
+          sed -i '' 's/\<restrict\>/__restrict__/g' "$INCLUDE_FILE"
+
+          # ---- START AUTOMATIC PATCHING FOR timer.c ----
+          echo "Auto-Patching $TIMER_C_FILE for macOS ARM..."
+
+          # Define the replacement C code block using a HEREDOC
+          # This block includes necessary headers and the cross-platform get_cycles function
+          read -r -d '' REPLACEMENT_CODE <<'EOF' || true
+          #include <stdint.h> /* For uint64_t */
+          #if defined(__APPLE__) && defined(__aarch64__)
+          #include <mach/mach_time.h> /* For mach_absolute_time */
+          #endif
+          #include <time.h> /* For clock() fallback */
+
+          /* Patched version for cross-platform compatibility */
+          static inline uint64_t get_cycles(void) {
+          #if defined(__APPLE__) && defined(__aarch64__)
+              /* Use macOS ARM high-resolution timer */
+              return mach_absolute_time();
+          #elif defined(__x86_64__) || defined(__i386__)
+              /* Original x86 code */
+              unsigned cycles_lo, cycles_hi;
+              __asm__ volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));
+              return ((uint64_t)cycles_hi << 32) | cycles_lo;
+          #else
+              /* Fallback for other architectures (might need improvement) */
+              #warning "get_cycles() not implemented for this architecture, using clock()"
+              return (uint64_t)clock(); /* Low resolution fallback */
+          #endif
+          }
+          EOF
+
+          # Check if the target function exists before trying to replace it
+          if grep -q "static inline uint64_t get_cycles(void)" "$TIMER_C_FILE"; then
+            echo "Found original get_cycles function. Replacing..."
+            # Create a temporary file excluding the old function definition
+            # This deletes lines from the start pattern to the end pattern (inclusive)
+            sed '/^static inline uint64_t get_cycles(void)/,/^}/d' "$TIMER_C_FILE" > "$TIMER_C_FILE.tmp"
+
+            # Prepend the new function definition (which includes headers) to the temporary file
+            echo "$REPLACEMENT_CODE" > "$TIMER_C_FILE.patched" # Start new file with replacement
+            cat "$TIMER_C_FILE.tmp" >> "$TIMER_C_FILE.patched" # Append the rest of original file
+
+            # Overwrite the original file
+            mv "$TIMER_C_FILE.patched" "$TIMER_C_FILE"
+            rm "$TIMER_C_FILE.tmp" # Clean up intermediate file
+          else
+            echo "WARNING: Could not find 'static inline uint64_t get_cycles(void)' in $TIMER_C_FILE. Skipping replacement."
+            # Consider exiting with error if replacement is mandatory: exit 1
+          fi
+
+          echo "Fixing printf format specifiers '%Ld' -> '%lld' in $TIMER_C_FILE..."
+          sed -i '' 's/%Ld/%lld/g' "$TIMER_C_FILE"
+
+          echo "Contents of $TIMER_C_FILE after patching:"
+          cat "$TIMER_C_FILE"
+          # ---- END AUTOMATIC PATCHING FOR timer.c ----
+
 
       # Step 6: Upload the macOS wheel artifact
       - name: Upload the macOS ARM wheel
