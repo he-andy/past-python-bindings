@@ -23,14 +23,19 @@ jobs:
         with:
           python-version: '3.12'
           
-      # Step 3: Install GCC 9 on Linux only
-      - name: Install GCC 9
+      # Step 3: Install OS-specific dependencies
+      - name: Install Linux dependencies
         if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-9 gcc-9
+          sudo apt-get install -y g++-9 gcc-9 automake autoconf libtool
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
+          
+      - name: Install macOS dependencies
+        if: matrix.os == 'macos-latest'
+        run: |
+          brew install automake autoconf libtool
           
       # Step 4: Install pybind11 and build dependencies
       - name: Install build dependencies
@@ -58,6 +63,8 @@ jobs:
               else
                 sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               fi
+              # Make bootstrap.sh executable
+              chmod +x ./past-0.7.2/bootstrap.sh
           fi
           
       # Step 6: Build the wheel with architecture flags for macOS
@@ -73,7 +80,7 @@ jobs:
           
       # Step 7: Upload the wheel as an artifact with an OS-specific name
       - name: Upload the wheel
-        uses: actions/upload-artifact@v4  # Updated from v3 to v4
+        uses: actions/upload-artifact@v4
         with:
           name: past-wheel-${{ matrix.os }}
           path: dist/
@@ -84,11 +91,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write  # Added permissions for creating releases
+      contents: write
     steps:
       # Step 8: Download all wheel artifacts
       - name: Download wheel artifacts
-        uses: actions/download-artifact@v4  # Updated from v3 to v4
+        uses: actions/download-artifact@v4
         with:
           path: dist/
           
