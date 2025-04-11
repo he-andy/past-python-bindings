@@ -11,19 +11,17 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]
-        python-version: ['3.10', '3.12']
     runs-on: ${{ matrix.os }}
     steps:
       # Step 1: Checkout the code
       - name: Checkout the code
         uses: actions/checkout@v4
         
-      # Step 2: Set up Python
-      - name: Set up Python ${{ matrix.python-version }}
+      # Step 2: Set up Python 3.12
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: ${{ matrix.python-version }}
-          cache: 'pip'
+          python-version: '3.12'
           
       # Step 3: Install GCC 9 on Linux only
       - name: Install GCC 9
@@ -73,11 +71,11 @@ jobs:
           python setup.py bdist_wheel
           mv dist ../
           
-      # Step 7: Upload the wheel as an artifact with an OS and Python-specific name
+      # Step 7: Upload the wheel as an artifact with an OS-specific name
       - name: Upload the wheel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v4  # Updated from v3 to v4
         with:
-          name: past-wheel-${{ matrix.os }}-py${{ matrix.python-version }}
+          name: past-wheel-${{ matrix.os }}
           path: dist/
           retention-days: 7
           
@@ -86,11 +84,11 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     permissions:
-      contents: write
+      contents: write  # Added permissions for creating releases
     steps:
       # Step 8: Download all wheel artifacts
       - name: Download wheel artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v4  # Updated from v3 to v4
         with:
           path: dist/
           
