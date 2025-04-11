@@ -13,15 +13,15 @@ jobs:
     steps:
       # Step 1: Checkout the code
       - name: Checkout the code
-        uses: actions/checkout@v4 # Updated to v4
+        uses: actions/checkout@v4
 
       # Step 2: Set up Python 3.12
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5 # Updated to v5
+        uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
-      # Step 3: Install GCC 9
+      # Step 3: Install GCC 9 (if required by past-0.7.2)
       - name: Install GCC 9
         run: |
           sudo apt-get update
@@ -30,13 +30,19 @@ jobs:
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
           gcc --version # Verify installation
 
-      # Step 4: Install pybind11 and build dependencies
-      - name: Install build dependencies
+      # Step 4: Install Autotools (Linux) - ADDED
+      - name: Install Autotools (Linux)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y automake autoconf libtool pkg-config # Added pkg-config as it's often needed too
+
+      # Step 5: Install pybind11 and Python build dependencies
+      - name: Install Python build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
 
-      # Step 5: Build the Linux wheel
+      # Step 6: Build the Linux wheel
       - name: Build the Linux wheel
         run: |
           set -e # Exit immediately if a command exits with a non-zero status.
@@ -50,20 +56,20 @@ jobs:
             sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
           cd past-0.7.2
+          # The setup.py likely triggers ./bootstrap.sh or similar, which needs autotools
           python setup.py bdist_wheel
-          # Move dist content to top-level dist directory relative to workspace root
           mv dist ../dist_linux # Use a distinct name temporarily
 
-      # Step 6: Upload the Linux wheel artifact
+      # Step 7: Upload the Linux wheel artifact
       - name: Upload the Linux wheel
-        uses: actions/upload-artifact@v4 # Updated to v4
+        uses: actions/upload-artifact@v4
         with:
-          name: dist-linux # Specific name for this artifact
-          path: dist_linux/ # Upload the contents of the temporary directory
+          name: dist-linux
+          path: dist_linux/
 
   build-macos-arm:
     name: Build macOS Wheel (ARM64)
-    runs-on: macos-14 # Runner with Apple Silicon (ARM64) architecture
+    runs-on: macos-14
     steps:
       # Step 1: Checkout the code
       - name: Checkout the code
@@ -74,87 +80,79 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          # Architecture setting might be needed if runner provides both
-          # architecture: arm64 # Explicitly request arm64 if needed
 
-      # Step 3: Install build dependencies (macOS uses Clang by default)
-      # Note: If compilation fails, you might need to install GCC via Homebrew:
-      # brew install gcc@9
-      # And potentially set environment variables:
-      # echo "CC=gcc-9" >> $GITHUB_ENV
-      # echo "CXX=g++-9" >> $GITHUB_ENV
-      - name: Install build dependencies
+      # Step 3: Install Autotools (macOS) - ADDED
+      - name: Install Autotools (macOS)
+        run: brew install automake autoconf libtool pkg-config # Added pkg-config
+
+      # Step 4: Install Python build dependencies
+      - name: Install Python build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
 
-      # Step 4: Build the macOS wheel
+      # Step 5: Build the macOS wheel
       - name: Build the macOS wheel
         run: |
-          set -e # Exit immediately if a command exits with a non-zero status.
+          set -e
           if [ ! -d "past-0.7.2" ]; then
-            # Use curl, standard on macOS
             curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
             tar -xvf past-0.7.2.tar.gz
             cp setup.py ./past-0.7.2/
             cp bindings.cpp ./past-0.7.2/src/
             cp Makefile.am ./past-0.7.2/src/
-            # macOS sed requires an argument for -i (backup extension), use '' for no backup
-            # Use __restrict__ which is understood by GCC and Clang
             sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
           cd past-0.7.2
+          # The setup.py likely triggers ./bootstrap.sh or similar, which needs autotools
           python setup.py bdist_wheel
-          # Move dist content to top-level dist directory relative to workspace root
           mv dist ../dist_macos # Use a distinct name temporarily
 
-      # Step 5: Upload the macOS wheel artifact
+      # Step 6: Upload the macOS wheel artifact
       - name: Upload the macOS ARM wheel
         uses: actions/upload-artifact@v4
         with:
-          name: dist-macos-arm # Specific name for this artifact
-          path: dist_macos/ # Upload the contents of the temporary directory
+          name: dist-macos-arm
+          path: dist_macos/
 
   release:
     name: Create GitHub Release
     # if: github.ref_type == 'tag' # IMPORTANT: Uncomment this line if you only want releases on git tags
-    needs: [build-linux, build-macos-arm] # Wait for both build jobs to complete
+    needs: [build-linux, build-macos-arm]
     runs-on: ubuntu-latest
-    permissions: # Need write permissions to create releases
+    permissions:
       contents: write
     steps:
       # Step 7a: Download Linux artifact
       - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: dist-linux # Name specified during upload
-          path: dist/ # Download directly into the 'dist' folder
+          name: dist-linux
+          path: dist/
 
       # Step 7b: Download macOS artifact
       - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: dist-macos-arm # Name specified during upload
-          path: dist/ # Download into the SAME 'dist' folder
+          name: dist-macos-arm
+          path: dist/
 
       # List downloaded files for verification (optional)
       - name: List files in dist
         run: ls -l dist/
 
-      # Step 8: Get short commit SHA (first 7 characters)
+      # Step 8: Get short commit SHA
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
 
-      # Step 9: Publish release with both wheels
+      # Step 9: Publish release
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: 'dist/*' # Upload all files (*.whl) from the 'dist' directory
-          token: ${{ secrets.GITHUB_TOKEN }} # Automatically available GitHub token
-          tag: ${{ env.COMMIT_HASH }} # Use the shortened commit hash as tag
-          # Consider using github.ref_name if triggering on tags: tag: ${{ github.ref_name }}
-          name: Release ${{ env.COMMIT_HASH }} # Optional: Use commit hash in release name
-          # name: Release ${{ github.ref_name }} # Use tag name for release if triggering on tags
-          body: "Automated release including Linux (x86_64) and macOS (ARM64) wheels. Built from commit ${{ github.sha }}." # Add more details if needed
+          artifacts: 'dist/*'
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ env.COMMIT_HASH }}
+          name: Release ${{ env.COMMIT_HASH }}
+          body: "Automated release including Linux (x86_64) and macOS (ARM64) wheels. Built from commit ${{ github.sha }}."
           draft: false
           prerelease: true # Consider setting to true if these are dev builds
