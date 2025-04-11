@@ -9,10 +9,7 @@ on:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
+    runs-on: ubuntu-latest
 
     steps:
       # Step 1: Checkout the code
@@ -25,9 +22,8 @@ jobs:
         with:
           python-version: '3.12'
 
-      # Step 3: Install GCC 9 on Linux only
+      # Step 3: Install GCC 9
       - name: Install GCC 9
-        if: matrix.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
           sudo apt-get install -y g++-9 gcc-9
@@ -40,77 +36,52 @@ jobs:
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
 
-      # Step 5: Download and prepare the past-0.7.2 package
-      - name: Download and prepare past-0.7.2
+      # Step 5: Build the wheel
+      - name: Build the wheel
         run: |
           if [ ! -d "past-0.7.2" ]; then
-              # Use wget on Linux and curl on macOS
-              if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-                  wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              else
-                  curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              fi
+              wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
               tar -xvf past-0.7.2.tar.gz
               cp setup.py ./past-0.7.2/
               cp bindings.cpp ./past-0.7.2/src/
               cp Makefile.am ./past-0.7.2/src/
-              # Use macOS-compatible sed on macOS
-              if [ "${{ matrix.os }}" == "ubuntu-latest" ]; then
-                sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              else
-                sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              fi
-          fi
-
-      # Step 6: Build the wheel with architecture flags for macOS
-      - name: Build the wheel
-        run: |
-          if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            echo "Building for macOS arm64..."
-            export ARCHFLAGS="-arch arm64"
+              sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
           cd past-0.7.2
           python setup.py bdist_wheel
           mv dist ../
 
-      # Step 7: Upload the wheel as an artifact with an OS-specific name
+      # Step 6: Upload the wheel as an artifact
       - name: Upload the wheel
         uses: actions/upload-artifact@v3
         with:
-          name: dist-${{ matrix.os }}
+          name: dist
           path: dist/
 
   release:
-    # Trigger release after both builds finish.
+    # if: github.ref_type == 'tag'  # Only trigger release if the commit is tagged
     needs: build
     runs-on: ubuntu-latest
 
     steps:
-      # Step 8: Download Linux artifact
-      - name: Download Linux wheel artifact
+      # Step 7: Download artifact
+      - name: Download artifact
         uses: actions/download-artifact@v3
         with:
-          name: dist-ubuntu-latest
-          path: dist/linux
+          name: dist
+          path: dist/  # This will ensure the artifact is downloaded to the dist/ folder
 
-      # Step 9: Download macOS artifact
-      - name: Download macOS wheel artifact
-        uses: actions/download-artifact@v3
-        with:
-          name: dist-macos-latest
-          path: dist/macos
-
-      # Step 10: Get short commit SHA (first 7 characters) for tagging the release
+      # Step 8: Get short commit SHA (first 7 characters)
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
 
-      # Step 11: Publish the release with both artifacts
+      # Step 9: Publish release
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: 'dist/**/*'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.COMMIT_HASH }}
-          name: Release ${{ github.event.head_commit.message }}
+          artifacts: 'dist/*'
+          token: ${{ secrets.GITHUB_TOKEN }}  # Automatically available GitHub token
+          tag: ${{ env.COMMIT_HASH }}  # Use the shortened commit hash
+          name: Release ${{ github.event.head_commit.message }}  # Optional: Use commit message as the release name
           draft: false
           prerelease: false
