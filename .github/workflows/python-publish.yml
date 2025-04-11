@@ -28,24 +28,31 @@ jobs:
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
           
-      - name: Install macOS dependencies
+      - name: Install macOS dependencies and set environment
         if: matrix.os == 'macos-latest'
         run: |
-          brew install automake autoconf libtool pkg-config
-          # Install specific version of Bison
-          brew install bison
-          echo 'export PATH="/usr/local/opt/bison/bin:$PATH"' >> ~/.bash_profile
-          export PATH="/usr/local/opt/bison/bin:$PATH"
-          # Show tool versions for debugging
-          autoconf --version
-          automake --version
-          libtool --version
-          make --version
+          # Install required build tools with Homebrew
+          brew install automake autoconf libtool pkg-config bison
+          
+          # Set up the correct PATH for Homebrew tools to be found first
+          echo 'export PATH="/opt/homebrew/opt/bison/bin:$PATH"' >> ~/.bash_profile
+          echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
+          source ~/.bash_profile
+          
+          # Make environment variables available to subsequent steps
+          echo "PATH=/opt/homebrew/bin:/opt/homebrew/opt/bison/bin:$PATH" >> $GITHUB_ENV
+          echo "LDFLAGS=-L/opt/homebrew/opt/bison/lib" >> $GITHUB_ENV
+          
+          # Verify tools are using Homebrew versions
+          which libtool
+          which autoconf
+          which automake
+          which bison
           
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install setuptools wheel pybind11 pytest
+          pip install setuptools wheel pybind11
           
       - name: Download and prepare past-0.7.2
         run: |
@@ -67,44 +74,72 @@ jobs:
               chmod +x ./past-0.7.2/bootstrap.sh
           fi
           
-      - name: Debug macOS environment
+      - name: Create simplified setup for macOS
         if: matrix.os == 'macos-latest'
         run: |
-          echo "SDKROOT: $SDKROOT"
-          echo "MACOSX_DEPLOYMENT_TARGET: $MACOSX_DEPLOYMENT_TARGET"
-          echo "Current directory:"
-          pwd
-          echo "Contents of directory:"
-          ls -la
-          echo "Past directory contents:"
-          ls -la past-0.7.2
+          # Create a simplified build script to avoid autotools complexity
+          cd past-0.7.2
+          cat > build_macos.sh << 'EOF'
+          #!/bin/bash
+          set -ex
           
-      - name: Configure and build on macOS
+          # Use Homebrew's GNU libtool explicitly
+          export LIBTOOL="glibtool"
+          export LIBTOOLIZE="glibtoolize"
+          export ACLOCAL="aclocal"
+          export AUTOCONF="autoconf"
+          export AUTOMAKE="automake"
+          
+          # Run bootstrap with explicit tools
+          $ACLOCAL
+          $LIBTOOLIZE --force
+          $AUTOCONF
+          $AUTOMAKE --add-missing
+          
+          # Configure with minimal options
+          ./configure --disable-dependency-tracking
+          
+          # Build with minimal targets
+          make -j4
+          EOF
+          
+          chmod +x build_macos.sh
+          
+      - name: Build on macOS
         if: matrix.os == 'macos-latest'
         run: |
           cd past-0.7.2
-          export ARCHFLAGS="-arch x86_64"  # Build for Intel to avoid ARM issues
+          export PATH="/opt/homebrew/bin:/opt/homebrew/opt/bison/bin:$PATH"
           export MACOSX_DEPLOYMENT_TARGET=11.0
-          ./bootstrap.sh
-          ./configure --disable-silent-rules V=1
-          make V=1  # Verbose make to see what's failing
-          cd ..
+          export ARCHFLAGS="-arch x86_64"
+          
+          # Try the simplified build script
+          ./build_macos.sh || (echo "Simplified build failed, trying alternative approach" && ./bootstrap.sh && ./configure && make)
           
       - name: Build the wheel
         run: |
           cd past-0.7.2
           if [ "${{ matrix.os }}" == "macos-latest" ]; then
-            export ARCHFLAGS="-arch x86_64"  # Match the architecture used in build
+            export PATH="/opt/homebrew/bin:/opt/homebrew/opt/bison/bin:$PATH"
             export MACOSX_DEPLOYMENT_TARGET=11.0
+            export ARCHFLAGS="-arch x86_64"
           fi
-          python setup.py bdist_wheel --verbose
-          cp dist/* ../
           
-      - name: Upload the wheel
+          # Try to build the wheel with better error output
+          python setup.py bdist_wheel -v || python -c "import shutil; shutil.rmtree('build', ignore_errors=True)" && VERBOSE=1 python setup.py bdist_wheel -v
+          
+          # Move the wheel to the root directory if it exists
+          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
+            cp dist/* ../
+          fi
+          
+      - name: Upload the wheel or debug info
         uses: actions/upload-artifact@v4
         with:
           name: past-wheel-${{ matrix.os }}
-          path: "*.whl"
+          path: |
+            *.whl
+            past-0.7.2/config.log
           retention-days: 7
           
   release:
@@ -118,13 +153,17 @@ jobs:
         with:
           path: dist/
           
+      - name: List downloaded artifacts
+        run: |
+          find dist -type f -name "*.whl" | sort
+          
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
         
       - name: Publish release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: 'dist/**/*'
+          artifacts: 'dist/**/*.whl'
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ env.COMMIT_HASH }}
           name: Release ${{ github.event.head_commit.message }}
