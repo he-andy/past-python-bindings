@@ -98,76 +98,69 @@ jobs:
               cp setup.py ./past-0.7.2/
               cp bindings.cpp ./past-0.7.2/src/
               cp Makefile.am ./past-0.7.2/src/
-              
-              # More thorough replacement of 'restrict' keyword across all files
-              find ./past-0.7.2 -type f -name "*.h" -exec sed -i '' 's/\<restrict\>/__restrict__/g' {} \;
-              find ./past-0.7.2 -type f -name "*.c" -exec sed -i '' 's/\<restrict\>/__restrict__/g' {} \;
-              
-              # Fix include paths - convert <past.h> to "past.h"
-              find ./past-0.7.2 -type f -name "*.h" -exec sed -i '' 's/#include <past\.h>/#include "past.h"/g' {} \;
-              
+              sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
               chmod +x ./past-0.7.2/bootstrap.sh
           fi
           
-          # Create a common.h file if it doesn't exist
-          if [ ! -f "./past-0.7.2/src/common.h" ]; then
-            echo "// Common header file for PAST bindings" > ./past-0.7.2/src/common.h
-            echo "#pragma once" >> ./past-0.7.2/src/common.h
-            echo "#include <stdio.h>" >> ./past-0.7.2/src/common.h
-            echo "#include <stdlib.h>" >> ./past-0.7.2/src/common.h
-          fi
-          
-      - name: Patch timer.c for macOS compatibility
+      - name: Patch timer.c for ARM architecture
         run: |
-          # Instead of applying a patch file, directly modify the timer.c file using sed
-          if [ -f "past-0.7.2/past/core/timer.c" ]; then
-            # Replace asm syntax
-            sed -i '' 's/**asm** volatile ("RDTSC"/__asm__ volatile ("rdtsc"/g' past-0.7.2/past/core/timer.c
-            
-            # Fix the %Ld format specifiers
-            sed -i '' 's/%Ld/%lld/g' past-0.7.2/past/core/timer.c
-            
-            # Add clock_gettime implementation for non-x86 architectures
-            cat > timer_fix.c << 'EOF'
-          #if !defined(__x86_64__) && !defined(__i386__)
-          /* Generic implementation for other architectures */
-          #include <time.h>
-          static __inline__ unsigned long long rdtsc(void)
-          {
-            struct timespec ts;
-            clock_gettime(CLOCK_MONOTONIC, &ts);
-            return (unsigned long long)(ts.tv_sec * 1000000000ULL + ts.tv_nsec);
-          }
-          #endif
+          # Create patch for timer.c
+          cat > timer_patch.diff << 'EOF'
+          --- a/past-0.7.2/past/core/timer.c
+          +++ b/past-0.7.2/past/core/timer.c
+          @@ -1,3 +1,4 @@
+          +#include <time.h>
+           /* -*- c -*- */
+           /*
+            * PAST - Parallel Application Specific Scheduler Toolkit
+          @@ -62,9 +63,22 @@
+           static void
+           past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo)
+           {
+          +#if defined(__x86_64__) || defined(__i386__)
+            /* We cannot use "=A", since this would use %rax on x86_64 */
+          -  **asm** volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));
+          +  __asm__ volatile ("rdtsc" : "=a" (*cycles_lo), "=d" (*cycles_hi));
+          +#else
+          +  /* Generic implementation for other architectures */
+          +  struct timespec ts;
+          +  clock_gettime(CLOCK_MONOTONIC, &ts);
+          +  unsigned long long cycles = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
+          +  *cycles_lo = (unsigned)(cycles & 0xFFFFFFFF);
+          +  *cycles_hi = (unsigned)(cycles >> 32);
+          +#endif
+           }
+          @@ -112,7 +126,7 @@
+           past_timer_print_time (FILE *out, int timer_id)
+           {
+             fprintf (out, "T%d: ", timer_id);
+          -  fprintf (out, "%Ld", g_past_timer_n_c_end[timer_id] -
+          +  fprintf (out, "%lld", (long long)(g_past_timer_n_c_end[timer_id] -
+                         g_past_timer_n_c_begin[timer_id]);
+             fprintf (out, "c ");
+           }
+          @@ -122,7 +136,7 @@
+           past_timer_print_acc_time (FILE *out, int timer_id)
+           {
+             fprintf (out, "T%d: ", timer_id);
+          -  fprintf (out, "%Ld", g_past_timer_n_c_acc[timer_id]);
+          +  fprintf (out, "%lld", (long long)g_past_timer_n_c_acc[timer_id]);
+             fprintf (out, "c ");
+           }
           EOF
             
-            # Insert the architecture-specific code at the top of timer.c
-            sed -i '' '1s/^/\
-          #include <time.h>\
-          #if defined(__x86_64__) || defined(__i386__)\
-          \/* x86 specific implementation *\/\
-          #else\
-          \/* Generic implementation for other architectures *\/\
-          static void past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo)\
-          {\
-            struct timespec ts;\
-            clock_gettime(CLOCK_MONOTONIC, &ts);\
-            unsigned long long cycles = ts.tv_sec * 1000000000ULL + ts.tv_nsec;\
-            *cycles_lo = (unsigned)(cycles & 0xFFFFFFFF);\
-            *cycles_hi = (unsigned)(cycles >> 32);\
-          }\
-          #endif\
-          \
-          /' past-0.7.2/past/core/timer.c
-            
-            # Replace the original past_get_num_cycles function with a conditional implementation
-            sed -i '' 's/static void[[:space:]]*past_get_num_cycles[[:space:]]*(unsigned \*cycles_hi, unsigned \*cycles_lo)[[:space:]]*{[[:space:]]*\/\* We cannot use "=A", since this would use %rax on x86_64 \*\/[[:space:]]*\*\*asm\*\* volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));[[:space:]]*}/#if defined(__x86_64__) || defined(__i386__)\
-          static void past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo) {\
-            \/* x86 specific implementation *\/\
-            __asm__ volatile ("rdtsc" : "=a" (*cycles_lo), "=d" (*cycles_hi));\
-          }\
-          #endif/g' past-0.7.2/past/core/timer.c
-          fi
+          # Prepare common.h
+          mkdir -p past-0.7.2/src
+          echo "// Common header file for PAST bindings" > past-0.7.2/src/common.h
+          echo "#pragma once" >> past-0.7.2/src/common.h
+          echo "#include <stdio.h>" >> past-0.7.2/src/common.h
+          echo "#include <stdlib.h>" >> past-0.7.2/src/common.h
+          
+          # Fix include paths
+          find past-0.7.2 -type f -name "*.h" -exec sed -i '' 's/#include <past\.h>/#include "past.h"/g' {} \; || true
+          
+          # Now apply the patch to the actual timer.c file
+          patch -p0 < timer_patch.diff || true
           
       - name: Build on macOS
         run: |
@@ -183,20 +176,11 @@ jobs:
           export MACOSX_DEPLOYMENT_TARGET=11.0
           export CPPFLAGS="-I./past/include -I./src -I."
           
-          # Create the common.h file
-          mkdir -p src
-          echo "// Common header file for PAST bindings" > src/common.h
-          echo "#pragma once" >> src/common.h
-          echo "#include <stdio.h>" >> src/common.h
-          echo "#include <stdlib.h>" >> src/common.h
-          
           # Create symlinks to ensure header files can be found
           mkdir -p include
-          # Create symbolic links for potential missing headers
-          if [ -f "past/include/past.h" ]; then
-            cp past/include/past.h include/past.h 2>/dev/null || true
-            cp past/include/past.h past/include/past/past.h 2>/dev/null || true
-          fi
+          cp -f past/include/past.h include/past.h 2>/dev/null || true
+          mkdir -p past/include/past
+          cp -f past/include/past.h past/include/past/past.h 2>/dev/null || true
           
           # Run the build process
           ./bootstrap.sh || true
@@ -208,12 +192,14 @@ jobs:
           make || true
           cd ..
           
-      - name: Try native build first, then fallback to stub if needed
+      - name: Try to build native wheel first
+        id: native-build
+        continue-on-error: true
         run: |
           cd past-0.7.2
           
-          # First attempt a native build with the extension
-          cat > setup_native.py << EOF
+          # Create a proper setup.py for macOS
+          cat > setup.py << EOF
           from setuptools import setup, find_packages, Extension
           import os
           import platform
@@ -258,19 +244,26 @@ jobs:
           )
           EOF
           
-          # Try native build first, capture success/failure
-          python setup_native.py bdist_wheel || NATIVE_BUILD_FAILED=1
+          # Try native build
+          python setup.py bdist_wheel
           
-          # If native build failed, create a fallback wheel
-          if [ -n "$NATIVE_BUILD_FAILED" ]; then
-              echo "Native build failed, creating fallback wheel"
-              
-              # If the build fails, create a fallback wheel with placeholder functionality
-              mkdir -p past
-              touch past/__init__.py
-              
-              # Create a simplified setup.py without the complex extension
-              cat > setup.py << EOF
+          # Copy wheels to root directory
+          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
+            cp dist/*.whl ../
+            echo "Native build succeeded"
+            exit 0
+          else
+            echo "Native build failed"
+            exit 1
+          fi
+      
+      - name: Create fallback wheel if native build failed
+        if: steps.native-build.outcome == 'failure'
+        run: |
+          cd past-0.7.2
+          
+          # Create a simplified setup.py without the complex extension
+          cat > setup.py << EOF
           from setuptools import setup, find_packages
           
           setup(
@@ -283,8 +276,9 @@ jobs:
           )
           EOF
               
-              # Create the dummy module
-              cat > past/__init__.py << EOF
+          # Create the dummy module
+          mkdir -p past
+          cat > past/__init__.py << EOF
           # PAST Python Package - macOS Compatibility Version
           
           class PASTError(Exception):
@@ -299,15 +293,6 @@ jobs:
               raise PASTError("This is a placeholder macOS wheel. Full functionality is only available on Linux.")
           EOF
               
-              # Build the wheel
-              python setup.py bdist_wheel
-          fi
-          
-          # Copy wheels to root directory
-          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
-            cp dist/*.whl ../
-          fi
-          
           # Build the wheel
           python setup.py bdist_wheel
           
