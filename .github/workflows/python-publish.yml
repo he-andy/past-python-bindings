@@ -117,56 +117,57 @@ jobs:
             echo "#include <stdlib.h>" >> ./past-0.7.2/src/common.h
           fi
           
-      - name: Patch timer.c for ARM architecture
+      - name: Patch timer.c for macOS compatibility
         run: |
-          # Create a patched version of the timer.c file for macOS
-          # Create patch for timer.c
-          cat > timer_patch.diff << 'EOF'
-          --- a/past-0.7.2/past/core/timer.c
-          +++ b/past-0.7.2/past/core/timer.c
-          @@ -62,9 +62,22 @@
-           static void
-           past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo)
-           {
-          -  /* We cannot use "=A", since this would use %rax on x86_64 */
-          -  **asm** volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));
-          +#if defined(__x86_64__) || defined(__i386__)
-          +  /* x86 specific implementation */
-          +  __asm__ volatile ("rdtsc" : "=a" (*cycles_lo), "=d" (*cycles_hi));
-          +#else
-          +  /* Generic implementation for other architectures */
-          +  struct timespec ts;
-          +  clock_gettime(CLOCK_MONOTONIC, &ts);
-          +  unsigned long long cycles = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-          +  *cycles_lo = (unsigned)(cycles & 0xFFFFFFFF);
-          +  *cycles_hi = (unsigned)(cycles >> 32);
-          +#endif
-           }
-          @@ -112,7 +125,7 @@
-           past_timer_print_time (FILE *out, int timer_id)
-           {
-             fprintf (out, "T%d: ", timer_id);
-          -  fprintf (out, "%Ld", g_past_timer_n_c_end[timer_id] -
-          +  fprintf (out, "%lld", (long long)(g_past_timer_n_c_end[timer_id] -
-                         g_past_timer_n_c_begin[timer_id]);
-             fprintf (out, "c ");
-           }
-          @@ -122,7 +135,7 @@
-           past_timer_print_acc_time (FILE *out, int timer_id)
-           {
-             fprintf (out, "T%d: ", timer_id);
-          -  fprintf (out, "%Ld", g_past_timer_n_c_acc[timer_id]);
-          +  fprintf (out, "%lld", (long long)g_past_timer_n_c_acc[timer_id]);
-             fprintf (out, "c ");
-           }
+          # Instead of applying a patch file, directly modify the timer.c file using sed
+          if [ -f "past-0.7.2/past/core/timer.c" ]; then
+            # Replace asm syntax
+            sed -i '' 's/**asm** volatile ("RDTSC"/__asm__ volatile ("rdtsc"/g' past-0.7.2/past/core/timer.c
+            
+            # Fix the %Ld format specifiers
+            sed -i '' 's/%Ld/%lld/g' past-0.7.2/past/core/timer.c
+            
+            # Add clock_gettime implementation for non-x86 architectures
+            cat > timer_fix.c << 'EOF'
+          #if !defined(__x86_64__) && !defined(__i386__)
+          /* Generic implementation for other architectures */
+          #include <time.h>
+          static __inline__ unsigned long long rdtsc(void)
+          {
+            struct timespec ts;
+            clock_gettime(CLOCK_MONOTONIC, &ts);
+            return (unsigned long long)(ts.tv_sec * 1000000000ULL + ts.tv_nsec);
+          }
+          #endif
           EOF
             
-          # Apply the patch to the actual timer.c file
-          cd past-0.7.2/past
-          if [ -f "core/timer.c" ]; then
-            patch -p2 < ../../timer_patch.diff || true
+            # Insert the architecture-specific code at the top of timer.c
+            sed -i '' '1s/^/\
+          #include <time.h>\
+          #if defined(__x86_64__) || defined(__i386__)\
+          \/* x86 specific implementation *\/\
+          #else\
+          \/* Generic implementation for other architectures *\/\
+          static void past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo)\
+          {\
+            struct timespec ts;\
+            clock_gettime(CLOCK_MONOTONIC, &ts);\
+            unsigned long long cycles = ts.tv_sec * 1000000000ULL + ts.tv_nsec;\
+            *cycles_lo = (unsigned)(cycles & 0xFFFFFFFF);\
+            *cycles_hi = (unsigned)(cycles >> 32);\
+          }\
+          #endif\
+          \
+          /' past-0.7.2/past/core/timer.c
+            
+            # Replace the original past_get_num_cycles function with a conditional implementation
+            sed -i '' 's/static void[[:space:]]*past_get_num_cycles[[:space:]]*(unsigned \*cycles_hi, unsigned \*cycles_lo)[[:space:]]*{[[:space:]]*\/\* We cannot use "=A", since this would use %rax on x86_64 \*\/[[:space:]]*\*\*asm\*\* volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));[[:space:]]*}/#if defined(__x86_64__) || defined(__i386__)\
+          static void past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo) {\
+            \/* x86 specific implementation *\/\
+            __asm__ volatile ("rdtsc" : "=a" (*cycles_lo), "=d" (*cycles_hi));\
+          }\
+          #endif/g' past-0.7.2/past/core/timer.c
           fi
-          cd ../..
           
       - name: Build on macOS
         run: |
@@ -200,23 +201,84 @@ jobs:
           make || true
           cd ..
           
-      - name: Create fallback wheel for macOS
+      - name: Try native build first, then fallback to stub if needed
         run: |
           cd past-0.7.2
           
-          # If the build fails, create a fallback wheel with placeholder functionality
-          mkdir -p past
-          touch past/__init__.py
+          # First attempt a native build with the extension
+          cat > setup_native.py << EOF
+          from setuptools import setup, find_packages, Extension
+          import os
+          import platform
           
-          # Create a simplified setup.py without the complex extension
-          cat > setup.py << 'EOF'
+          # Define the extension module
+          extension_kwargs = {
+              'include_dirs': ['past/include', 'src', '.'],
+              'library_dirs': ['past/.libs', 'past/core/.libs'],
+              'libraries': ['past'],
+          }
+          
+          # Handle macOS specific settings
+          if platform.system() == 'Darwin':
+              extension_kwargs['extra_compile_args'] = [
+                  '-DHAVE_CLOCK_GETTIME',
+                  '-I./past/include',
+                  '-I./src',
+                  '-I.'
+              ]
+              extension_kwargs['extra_link_args'] = [
+                  '-L./past/.libs',
+                  '-L./past/core/.libs'
+              ]
+          
+          # Create the extension
+          ext_modules = [
+              Extension(
+                  'past._binding',
+                  ['src/bindings.cpp'],
+                  **extension_kwargs
+              )
+          ]
+          
+          setup(
+              name="past",
+              version="0.7.2",
+              packages=find_packages(),
+              ext_modules=ext_modules,
+              description="Python bindings for the PAST library",
+              author="Your Name",
+              author_email="your.email@example.com",
+          )
+          EOF
+          
+          # Try native build first, capture success/failure
+          python setup_native.py bdist_wheel || NATIVE_BUILD_FAILED=1
+          
+          # If native build failed, create a fallback wheel
+          if [ -n "$NATIVE_BUILD_FAILED" ]; then
+              echo "Native build failed, creating fallback wheel"
+              
+              # If the build fails, create a fallback wheel with placeholder functionality
+              mkdir -p past
+              touch past/__init__.py
+              
+              # Create a simplified setup.py without the complex extension
+              cat > setup.py << EOF
           from setuptools import setup, find_packages
-          import sys
           
-          # Create a dummy past module that provides basic functionality
-          with open('past/__init__.py', 'w') as f:
-              f.write("""
-          # PAST Python Package
+          setup(
+              name="past",
+              version="0.7.2",
+              packages=find_packages(),
+              description="Python bindings for the PAST library (macOS compatibility package)",
+              author="Your Name",
+              author_email="your.email@example.com",
+          )
+          EOF
+              
+              # Create the dummy module
+              cat > past/__init__.py << EOF
+          # PAST Python Package - macOS Compatibility Version
           
           class PASTError(Exception):
               pass
@@ -228,25 +290,16 @@ jobs:
           def analyze(*args, **kwargs):
               """Placeholder for PAST analysis function"""
               raise PASTError("This is a placeholder macOS wheel. Full functionality is only available on Linux.")
-          """)
-          
-          setup(
-              name="past",
-              version="0.7.2",
-              packages=find_packages(),
-              description="Python bindings for the PAST library (macOS compatibility package)",
-              author="Your Name",
-              author_email="your.email@example.com",
-              classifiers=[
-                  'Development Status :: 3 - Alpha',
-                  'Intended Audience :: Developers',
-                  'License :: OSI Approved :: MIT License',
-                  'Programming Language :: Python :: 3',
-                  'Operating System :: MacOS :: MacOS X',
-              ],
-              python_requires='>=3.6',
-          )
           EOF
+              
+              # Build the wheel
+              python setup.py bdist_wheel
+          fi
+          
+          # Copy wheels to root directory
+          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
+            cp dist/*.whl ../
+          fi
           
           # Build the wheel
           python setup.py bdist_wheel
