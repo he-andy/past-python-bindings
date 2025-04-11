@@ -1,371 +1,160 @@
-name: Build and Publish Python Wheel
+name: Build and Publish Python Wheels (Linux & macOS ARM)
+
+# Trigger on every push to any branch
 on:
   push:
     branches:
-      - '**'
-  workflow_dispatch:
+      - '**'  # Triggers on every branch push
 
 jobs:
   build-linux:
+    name: Build Linux Wheel (x86_64)
     runs-on: ubuntu-latest
     steps:
+      # Step 1: Checkout the code
       - name: Checkout the code
-        uses: actions/checkout@v4
-        
+        uses: actions/checkout@v4 # Updated to v4
+
+      # Step 2: Set up Python 3.12
       - name: Set up Python 3.12
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v5 # Updated to v5
         with:
           python-version: '3.12'
-          
-      - name: Install Linux dependencies
+
+      # Step 3: Install GCC 9
+      - name: Install GCC 9
         run: |
           sudo apt-get update
-          sudo apt-get install -y g++-9 gcc-9 automake autoconf libtool pkg-config make
+          sudo apt-get install -y g++-9 gcc-9
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-9 50
           sudo update-alternatives --install /usr/bin/g++ g++ /usr/bin/g++-9 50
-          
+          gcc --version # Verify installation
+
+      # Step 4: Install pybind11 and build dependencies
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
-          
-      - name: Download and prepare past-0.7.2
+
+      # Step 5: Build the Linux wheel
+      - name: Build the Linux wheel
         run: |
+          set -e # Exit immediately if a command exits with a non-zero status.
           if [ ! -d "past-0.7.2" ]; then
-              wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              tar -xvf past-0.7.2.tar.gz
-              cp setup.py ./past-0.7.2/
-              cp bindings.cpp ./past-0.7.2/src/
-              cp Makefile.am ./past-0.7.2/src/
-              sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              chmod +x ./past-0.7.2/bootstrap.sh
+            wget https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
+            tar -xvf past-0.7.2.tar.gz
+            cp setup.py ./past-0.7.2/
+            cp bindings.cpp ./past-0.7.2/src/
+            cp Makefile.am ./past-0.7.2/src/
+            # Use __restrict__ which is understood by GCC and Clang
+            sed -i 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
-          
-      - name: Build on Linux
-        run: |
-          cd past-0.7.2
-          ./bootstrap.sh
-          ./configure
-          make
-          
-      - name: Build the wheel
-        run: |
           cd past-0.7.2
           python setup.py bdist_wheel
-          
-          # Copy wheels to root directory
-          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
-            cp dist/*.whl ../
-          fi
-          
-      - name: Upload the wheel
-        uses: actions/upload-artifact@v4
+          # Move dist content to top-level dist directory relative to workspace root
+          mv dist ../dist_linux # Use a distinct name temporarily
+
+      # Step 6: Upload the Linux wheel artifact
+      - name: Upload the Linux wheel
+        uses: actions/upload-artifact@v4 # Updated to v4
         with:
-          name: past-wheel-linux
-          path: |
-            *.whl
-            past-0.7.2/config.log
-          retention-days: 7
-  
-  build-macos:
-    runs-on: macos-latest
+          name: dist-linux # Specific name for this artifact
+          path: dist_linux/ # Upload the contents of the temporary directory
+
+  build-macos-arm:
+    name: Build macOS Wheel (ARM64)
+    runs-on: macos-14 # Runner with Apple Silicon (ARM64) architecture
     steps:
+      # Step 1: Checkout the code
       - name: Checkout the code
         uses: actions/checkout@v4
-        
+
+      # Step 2: Set up Python 3.12
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          
-      - name: Install macOS dependencies
-        run: |
-          brew install automake autoconf libtool pkg-config
-          echo 'export PATH="/opt/homebrew/bin:$PATH"' >> ~/.bash_profile
-          source ~/.bash_profile
-          echo "PATH=/opt/homebrew/bin:$PATH" >> $GITHUB_ENV
-          
+          # Architecture setting might be needed if runner provides both
+          # architecture: arm64 # Explicitly request arm64 if needed
+
+      # Step 3: Install build dependencies (macOS uses Clang by default)
+      # Note: If compilation fails, you might need to install GCC via Homebrew:
+      # brew install gcc@9
+      # And potentially set environment variables:
+      # echo "CC=gcc-9" >> $GITHUB_ENV
+      # echo "CXX=g++-9" >> $GITHUB_ENV
       - name: Install build dependencies
         run: |
           python -m pip install --upgrade pip
           pip install setuptools wheel pybind11
-          
-      - name: Download and prepare past-0.7.2
+
+      # Step 4: Build the macOS wheel
+      - name: Build the macOS wheel
         run: |
+          set -e # Exit immediately if a command exits with a non-zero status.
           if [ ! -d "past-0.7.2" ]; then
-              curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
-              tar -xvf past-0.7.2.tar.gz
-              cp setup.py ./past-0.7.2/
-              cp bindings.cpp ./past-0.7.2/src/
-              cp Makefile.am ./past-0.7.2/src/
-              sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
-              chmod +x ./past-0.7.2/bootstrap.sh
+            # Use curl, standard on macOS
+            curl -L -o past-0.7.2.tar.gz https://master.dl.sourceforge.net/project/pocc/1.6/testing/modules/past-0.7.2.tar.gz
+            tar -xvf past-0.7.2.tar.gz
+            cp setup.py ./past-0.7.2/
+            cp bindings.cpp ./past-0.7.2/src/
+            cp Makefile.am ./past-0.7.2/src/
+            # macOS sed requires an argument for -i (backup extension), use '' for no backup
+            # Use __restrict__ which is understood by GCC and Clang
+            sed -i '' 's/\<restrict\>/__restrict__/g' ./past-0.7.2/past/include/past/abstract_interpretation_memory.h
           fi
-          
-      - name: Patch timer.c for ARM architecture
-        run: |
-          # Create patch for timer.c
-          cat > timer_patch.diff << 'EOF'
-          --- a/past-0.7.2/past/core/timer.c
-          +++ b/past-0.7.2/past/core/timer.c
-          @@ -1,3 +1,4 @@
-          +#include <time.h>
-           /* -*- c -*- */
-           /*
-            * PAST - Parallel Application Specific Scheduler Toolkit
-          @@ -62,9 +63,22 @@
-           static void
-           past_get_num_cycles (unsigned *cycles_hi, unsigned *cycles_lo)
-           {
-          +#if defined(__x86_64__) || defined(__i386__)
-            /* We cannot use "=A", since this would use %rax on x86_64 */
-          -  **asm** volatile ("RDTSC" : "=a" (cycles_lo), "=d" (cycles_hi));
-          +  __asm__ volatile ("rdtsc" : "=a" (*cycles_lo), "=d" (*cycles_hi));
-          +#else
-          +  /* Generic implementation for other architectures */
-          +  struct timespec ts;
-          +  clock_gettime(CLOCK_MONOTONIC, &ts);
-          +  unsigned long long cycles = ts.tv_sec * 1000000000ULL + ts.tv_nsec;
-          +  *cycles_lo = (unsigned)(cycles & 0xFFFFFFFF);
-          +  *cycles_hi = (unsigned)(cycles >> 32);
-          +#endif
-           }
-          @@ -112,7 +126,7 @@
-           past_timer_print_time (FILE *out, int timer_id)
-           {
-             fprintf (out, "T%d: ", timer_id);
-          -  fprintf (out, "%Ld", g_past_timer_n_c_end[timer_id] -
-          +  fprintf (out, "%lld", (long long)(g_past_timer_n_c_end[timer_id] -
-                         g_past_timer_n_c_begin[timer_id]);
-             fprintf (out, "c ");
-           }
-          @@ -122,7 +136,7 @@
-           past_timer_print_acc_time (FILE *out, int timer_id)
-           {
-             fprintf (out, "T%d: ", timer_id);
-          -  fprintf (out, "%Ld", g_past_timer_n_c_acc[timer_id]);
-          +  fprintf (out, "%lld", (long long)g_past_timer_n_c_acc[timer_id]);
-             fprintf (out, "c ");
-           }
-          EOF
-            
-          # Prepare common.h
-          mkdir -p past-0.7.2/src
-          echo "// Common header file for PAST bindings" > past-0.7.2/src/common.h
-          echo "#pragma once" >> past-0.7.2/src/common.h
-          echo "#include <stdio.h>" >> past-0.7.2/src/common.h
-          echo "#include <stdlib.h>" >> past-0.7.2/src/common.h
-          
-          # Fix include paths
-          find past-0.7.2 -type f -name "*.h" -exec sed -i '' 's/#include <past\.h>/#include "past.h"/g' {} \; || true
-          
-          # Now apply the patch to the actual timer.c file
-          patch -p0 < timer_patch.diff || true
-          
-      - name: Build on macOS
-        run: |
           cd past-0.7.2
-          
-          # Use Homebrew's GNU tools
-          export PATH="/opt/homebrew/bin:$PATH" 
-          export LIBTOOLIZE=glibtoolize
-          
-          # Set macOS compilation flags to avoid ARM-specific issues
-          export CFLAGS="-DHAVE_CLOCK_GETTIME -I/opt/homebrew/include -I./past/include -I./src -I."
-          export LDFLAGS="-L/opt/homebrew/lib"
-          export MACOSX_DEPLOYMENT_TARGET=11.0
-          export CPPFLAGS="-I./past/include -I./src -I."
-          
-          # Create symlinks to ensure header files can be found
-          mkdir -p include
-          cp -f past/include/past.h include/past.h 2>/dev/null || true
-          mkdir -p past/include/past
-          cp -f past/include/past.h past/include/past/past.h 2>/dev/null || true
-          
-          # Run the build process
-          ./bootstrap.sh || true
-          ./configure || true
-          
-          # Try to build anyway - we've patched the problematic file
-          cd past
-          make clean || true
-          make || true
-          cd ..
-          
-      - name: Try to build native wheel first
-        id: native-build
-        continue-on-error: true
-        run: |
-          cd past-0.7.2
-          
-          # Create a proper setup.py for macOS
-          cat > setup.py << EOF
-          from setuptools import setup, find_packages, Extension
-          import os
-          import platform
-          
-          # Define the extension module
-          extension_kwargs = {
-              'include_dirs': ['past/include', 'src', '.'],
-              'library_dirs': ['past/.libs', 'past/core/.libs'],
-              'libraries': ['past'],
-          }
-          
-          # Handle macOS specific settings
-          if platform.system() == 'Darwin':
-              extension_kwargs['extra_compile_args'] = [
-                  '-DHAVE_CLOCK_GETTIME',
-                  '-I./past/include',
-                  '-I./src',
-                  '-I.'
-              ]
-              extension_kwargs['extra_link_args'] = [
-                  '-L./past/.libs',
-                  '-L./past/core/.libs'
-              ]
-          
-          # Create the extension
-          ext_modules = [
-              Extension(
-                  'past._binding',
-                  ['src/bindings.cpp'],
-                  **extension_kwargs
-              )
-          ]
-          
-          setup(
-              name="past",
-              version="0.7.2",
-              packages=find_packages(),
-              ext_modules=ext_modules,
-              description="Python bindings for the PAST library",
-              author="Your Name",
-              author_email="your.email@example.com",
-          )
-          EOF
-          
-          # Try native build
           python setup.py bdist_wheel
-          
-          # Copy wheels to root directory
-          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
-            cp dist/*.whl ../
-            echo "Native build succeeded"
-            exit 0
-          else
-            echo "Native build failed"
-            exit 1
-          fi
-      
-      - name: Create fallback wheel if native build failed
-        if: steps.native-build.outcome == 'failure'
-        run: |
-          cd past-0.7.2
-          
-          # Create a simplified setup.py without the complex extension
-          cat > setup.py << EOF
-          from setuptools import setup, find_packages
-          
-          setup(
-              name="past",
-              version="0.7.2",
-              packages=find_packages(),
-              description="Python bindings for the PAST library (macOS compatibility package)",
-              author="Your Name",
-              author_email="your.email@example.com",
-          )
-          EOF
-              
-          # Create the dummy module
-          mkdir -p past
-          cat > past/__init__.py << EOF
-          # PAST Python Package - macOS Compatibility Version
-          
-          class PASTError(Exception):
-              pass
-          
-          def process(*args, **kwargs):
-              """Placeholder for PAST processing function"""
-              raise PASTError("This is a placeholder macOS wheel. Full functionality is only available on Linux.")
-          
-          def analyze(*args, **kwargs):
-              """Placeholder for PAST analysis function"""
-              raise PASTError("This is a placeholder macOS wheel. Full functionality is only available on Linux.")
-          EOF
-              
-          # Build the wheel
-          python setup.py bdist_wheel
-          
-          # Copy wheels to root directory
-          if [ -d "dist" ] && [ "$(ls -A dist)" ]; then
-            cp dist/*.whl ../
-          fi
-          
-      - name: Upload the wheel
+          # Move dist content to top-level dist directory relative to workspace root
+          mv dist ../dist_macos # Use a distinct name temporarily
+
+      # Step 5: Upload the macOS wheel artifact
+      - name: Upload the macOS ARM wheel
         uses: actions/upload-artifact@v4
         with:
-          name: past-wheel-macos
-          path: |
-            *.whl
-            past-0.7.2/config.log
-          retention-days: 7
-  
-  release-linux:
-    needs: build-linux
+          name: dist-macos-arm # Specific name for this artifact
+          path: dist_macos/ # Upload the contents of the temporary directory
+
+  release:
+    name: Create GitHub Release
+    # if: github.ref_type == 'tag' # IMPORTANT: Uncomment this line if you only want releases on git tags
+    needs: [build-linux, build-macos-arm] # Wait for both build jobs to complete
     runs-on: ubuntu-latest
-    permissions:
+    permissions: # Need write permissions to create releases
       contents: write
     steps:
-      - name: Download wheel artifacts
+      # Step 7a: Download Linux artifact
+      - name: Download Linux artifact
         uses: actions/download-artifact@v4
         with:
-          name: past-wheel-linux
-          path: dist/
-          
-      - name: List downloaded artifacts
-        run: |
-          find dist -type f -name "*.whl" | sort
-          
-      - name: Get short commit SHA
-        run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
-        
-      - name: Publish Linux release
-        uses: ncipollo/release-action@v1
-        with:
-          artifacts: 'dist/**/*.whl'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.COMMIT_HASH }}-linux
-          name: Linux Release ${{ github.event.head_commit.message }}
-          draft: false
-          prerelease: false
-          allowUpdates: true
-  
-  release-macos:
-    needs: build-macos
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: Download wheel artifacts
+          name: dist-linux # Name specified during upload
+          path: dist/ # Download directly into the 'dist' folder
+
+      # Step 7b: Download macOS artifact
+      - name: Download macOS artifact
         uses: actions/download-artifact@v4
         with:
-          name: past-wheel-macos
-          path: dist/
-          
-      - name: List downloaded artifacts
-        run: |
-          find dist -type f -name "*.whl" | sort
-          
+          name: dist-macos-arm # Name specified during upload
+          path: dist/ # Download into the SAME 'dist' folder
+
+      # List downloaded files for verification (optional)
+      - name: List files in dist
+        run: ls -l dist/
+
+      # Step 8: Get short commit SHA (first 7 characters)
       - name: Get short commit SHA
         run: echo "COMMIT_HASH=$(echo ${GITHUB_SHA} | cut -c1-7)" >> $GITHUB_ENV
-        
-      - name: Publish macOS release
+
+      # Step 9: Publish release with both wheels
+      - name: Publish release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: 'dist/**/*.whl'
-          token: ${{ secrets.GITHUB_TOKEN }}
-          tag: ${{ env.COMMIT_HASH }}-macos
-          name: macOS Release ${{ github.event.head_commit.message }}
+          artifacts: 'dist/*' # Upload all files (*.whl) from the 'dist' directory
+          token: ${{ secrets.GITHUB_TOKEN }} # Automatically available GitHub token
+          tag: ${{ env.COMMIT_HASH }} # Use the shortened commit hash as tag
+          # Consider using github.ref_name if triggering on tags: tag: ${{ github.ref_name }}
+          name: Release ${{ env.COMMIT_HASH }} # Optional: Use commit hash in release name
+          # name: Release ${{ github.ref_name }} # Use tag name for release if triggering on tags
+          body: "Automated release including Linux (x86_64) and macOS (ARM64) wheels. Built from commit ${{ github.sha }}." # Add more details if needed
           draft: false
-          prerelease: false
-          allowUpdates: true
+          prerelease: true # Consider setting to true if these are dev builds
